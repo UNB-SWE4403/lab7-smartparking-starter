@@ -1,0 +1,109 @@
+name: Lab 7 Autograding
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  autograde:
+    runs-on: ubuntu-latest
+    name: Compile, test, and structural checks
+
+    steps:
+      - name: Checkout submission
+        uses: actions/checkout@v4
+
+      # ── 1. Compile production code ──────────────────────────────────────────
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Compile production sources
+        run: |
+          mkdir -p out/production
+          javac -d out/production src/smartparking/*.java
+        # A compile failure here = Part 2 code quality marks at risk.
+        # The TA sees the red check before opening the repo.
+
+      # ── 2. Download JUnit 5 and compile tests ───────────────────────────────
+      - name: Download JUnit 5 jars
+        run: |
+          mkdir -p lib
+          curl -sL https://repo1.maven.org/maven2/org/junit/jupiter/junit-jupiter-api/5.10.2/junit-jupiter-api-5.10.2.jar       -o lib/junit-jupiter-api.jar
+          curl -sL https://repo1.maven.org/maven2/org/junit/jupiter/junit-jupiter-engine/5.10.2/junit-jupiter-engine-5.10.2.jar -o lib/junit-jupiter-engine.jar
+          curl -sL https://repo1.maven.org/maven2/org/junit/platform/junit-platform-console-standalone/1.10.2/junit-platform-console-standalone-1.10.2.jar -o lib/junit-platform-console.jar
+          curl -sL https://repo1.maven.org/maven2/org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar -o lib/opentest4j.jar
+
+      - name: Compile test sources
+        run: |
+          mkdir -p out/test
+          javac -cp out/production:lib/junit-jupiter-api.jar:lib/opentest4j.jar \
+                -d out/test \
+                src/test/smartparking/SensorServiceTest.java
+
+      # ── 3. Run tests ────────────────────────────────────────────────────────
+      - name: Run autograding tests
+        run: |
+          java -cp out/production:out/test:lib/junit-platform-console.jar:lib/junit-jupiter-engine.jar:lib/junit-jupiter-api.jar:lib/opentest4j.jar \
+               org.junit.platform.console.ConsoleLauncher \
+               --scan-class-path=out/test \
+               --disable-ansi-colors \
+               --details=tree
+
+      # ── 4. Structural file checks ───────────────────────────────────────────
+      # These do not assign marks — they give the TA an instant signal about
+      # which deliverable files are present before opening the repo.
+      - name: Check required deliverable files exist
+        run: |
+          echo "Checking for required Lab 7 deliverable files..."
+          MISSING=0
+
+          check_file() {
+            if [ -f "$1" ]; then
+              echo "  ✓  $1"
+            else
+              echo "  ✗  MISSING: $1"
+              MISSING=$((MISSING + 1))
+            fi
+          }
+
+          check_file "docs/coupling-diagnosis.md"
+          check_file "docs/atam-notes.md"
+
+          # At least one ADR file must exist under docs/decisions/
+          ADR_COUNT=$(find docs/decisions -name "adr-*.md" 2>/dev/null | wc -l)
+          if [ "$ADR_COUNT" -gt 0 ]; then
+            echo "  ✓  docs/decisions/ contains $ADR_COUNT ADR file(s)"
+          else
+            echo "  ✗  MISSING: no adr-*.md found under docs/decisions/"
+            MISSING=$((MISSING + 1))
+          fi
+
+          # IOccupancyConsumer.java must exist (key structural deliverable)
+          check_file "src/smartparking/IOccupancyConsumer.java"
+
+          if [ "$MISSING" -gt 0 ]; then
+            echo ""
+            echo "::warning::$MISSING required file(s) missing — TA review needed."
+            # Do not fail the workflow — missing docs are a mark deduction, not
+            # a blocking error. The TA decides.
+          else
+            echo ""
+            echo "All required files present."
+          fi
+
+      # ── 5. Commit count check ───────────────────────────────────────────────
+      - name: Check lab7 commit messages
+        run: |
+          echo "Lab 7 commit messages (most recent 10):"
+          git log --oneline -10
+          echo ""
+          LAB7_COMMITS=$(git log --oneline | grep -i "lab7" | wc -l)
+          echo "Commits containing 'lab7': $LAB7_COMMITS"
+          if [ "$LAB7_COMMITS" -lt 4 ]; then
+            echo "::warning::Fewer than 4 lab7 commits found — student may not have followed the commit rhythm."
+          fi
